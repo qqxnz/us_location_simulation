@@ -41,6 +41,17 @@ app/build/outputs/apk/debug/app-debug.apk
 - 应用没有账号、分析 SDK、网络权限或远程存储。
 - 应用不会读取、上传或保存设备的真实位置。
 
+## 浏览器定位测试页
+
+仓库内提供了一个调用浏览器标准 Geolocation API 的测试页，可用于检查当前系统位置或模拟位置：
+
+```bash
+cd tools/geolocation-test
+python3 -m http.server 8080
+```
+
+然后在同一台设备上打开 `http://localhost:8080`。若要从手机访问其他设备提供的页面，需要使用 HTTPS，否则大多数手机浏览器不会开放定位权限。
+
 ## 已知限制
 
 - 依赖 IP、Wi-Fi、蓝牙或服务端风控判断位置的 App 不一定采用模拟坐标。
