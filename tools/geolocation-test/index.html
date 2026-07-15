@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>系统定位 API 测试</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 24px; background: #f5faf8; color: #10201e; }
+    main { max-width: 640px; margin: auto; }
+    button { padding: 14px 20px; font-size: 18px; border: 0; border-radius: 12px; background: #006a64; color: white; }
+    pre { padding: 18px; border-radius: 12px; background: white; font-size: 18px; line-height: 1.5; white-space: pre-wrap; }
+    small { color: #4a6360; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>系统定位 API 测试</h1>
+  <p>此页面只调用 <code>navigator.geolocation</code>，不使用 IP 定位。</p>
+  <button id="locate">读取系统位置</button>
+  <pre id="result">等待读取…</pre>
+  <small>保持模拟定位 App 运行，并允许浏览器使用位置。</small>
+</main>
+<script>
+  const result = document.querySelector('#result');
+  function locate() {
+    result.textContent = '正在请求系统位置…';
+    navigator.geolocation.getCurrentPosition(
+      ({coords, timestamp}) => {
+        result.textContent = [
+          '读取成功',
+          `纬度：${coords.latitude.toFixed(6)}`,
+          `经度：${coords.longitude.toFixed(6)}`,
+          `精度：${Math.round(coords.accuracy)} 米`,
+          `时间：${new Date(timestamp).toLocaleString()}`
+        ].join('\n');
+      },
+      error => { result.textContent = `读取失败（${error.code}）：${error.message}`; },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+  document.querySelector('#locate').addEventListener('click', locate);
+  locate();
+</script>
+</body>
+</html>

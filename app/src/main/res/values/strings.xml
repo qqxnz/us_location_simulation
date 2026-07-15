@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">美国州府模拟定位</string>
+    <string name="notification_channel_name">模拟定位状态</string>
+    <string name="notification_channel_description">显示正在使用的美国州府模拟位置</string>
+    <string name="notification_title">模拟定位运行中</string>
+    <string name="notification_stop">停止</string>
+</resources>
