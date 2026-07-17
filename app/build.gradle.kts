@@ -12,8 +12,8 @@ android {
         applicationId = "com.sywd.usamocklocation"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -55,8 +55,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.0")
     implementation("androidx.compose.material3:material3:1.1.2")
     implementation("androidx.compose.material:material-icons-core:1.4.1")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
 
     testImplementation("junit:junit:4.12")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.0")
 }

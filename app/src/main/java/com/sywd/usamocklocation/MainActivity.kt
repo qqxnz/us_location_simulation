@@ -5,8 +5,10 @@ import android.app.AppOpsManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -31,6 +33,7 @@ data class EnvironmentStatus(
     val hasFineLocationPermission: Boolean,
     val isLocationEnabled: Boolean,
     val isSelectedMockApp: Boolean,
+    val isIgnoringBatteryOptimizations: Boolean,
 )
 
 class MainActivity : ComponentActivity() {
@@ -40,6 +43,7 @@ class MainActivity : ComponentActivity() {
             hasFineLocationPermission = false,
             isLocationEnabled = false,
             isSelectedMockApp = false,
+            isIgnoringBatteryOptimizations = false,
         ),
     )
 
@@ -78,6 +82,7 @@ class MainActivity : ComponentActivity() {
                         onStop = viewModel::stopMocking,
                         onOpenDeveloperSettings = ::openDeveloperSettings,
                         onOpenLocationSettings = ::openLocationSettings,
+                        onOpenBatterySettings = ::openBatterySettings,
                     )
                 }
             }
@@ -104,6 +109,7 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshEnvironmentStatus() {
         val locationManager = getSystemService(LocationManager::class.java)
+        val powerManager = getSystemService(PowerManager::class.java)
         environmentStatus = EnvironmentStatus(
             hasFineLocationPermission = ContextCompat.checkSelfPermission(
                 this,
@@ -111,6 +117,7 @@ class MainActivity : ComponentActivity() {
             ) == PackageManager.PERMISSION_GRANTED,
             isLocationEnabled = locationManager.isLocationEnabled,
             isSelectedMockApp = isSelectedAsMockLocationApp(),
+            isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(packageName),
         )
     }
 
@@ -142,6 +149,18 @@ class MainActivity : ComponentActivity() {
 
     private fun openLocationSettings() {
         openSettings(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+    }
+
+    private fun openBatterySettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }.onFailure {
+            openSettings(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                },
+            )
+        }
     }
 
     private fun openSettings(intent: Intent) {

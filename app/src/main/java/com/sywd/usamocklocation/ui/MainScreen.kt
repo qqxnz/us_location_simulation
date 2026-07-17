@@ -66,6 +66,7 @@ fun MainScreen(
     onStop: () -> Unit,
     onOpenDeveloperSettings: () -> Unit,
     onOpenLocationSettings: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
@@ -114,6 +115,7 @@ fun MainScreen(
                     environmentStatus = environmentStatus,
                     onOpenDeveloperSettings = onOpenDeveloperSettings,
                     onOpenLocationSettings = onOpenLocationSettings,
+                    onOpenBatterySettings = onOpenBatterySettings,
                 )
             }
 
@@ -220,6 +222,7 @@ private fun SetupCard(
     environmentStatus: EnvironmentStatus,
     onOpenDeveloperSettings: () -> Unit,
     onOpenLocationSettings: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
 ) {
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -230,15 +233,19 @@ private fun SetupCard(
             SetupRow("精确定位权限", environmentStatus.hasFineLocationPermission)
             SetupRow("系统定位开关", environmentStatus.isLocationEnabled)
             SetupRow("已设为模拟位置信息应用", environmentStatus.isSelectedMockApp)
+            SetupRow("电池优化已忽略", environmentStatus.isIgnoringBatteryOptimizations)
 
-            if (!environmentStatus.isLocationEnabled || !environmentStatus.isSelectedMockApp) {
+            if (!environmentStatus.isLocationEnabled ||
+                !environmentStatus.isSelectedMockApp ||
+                !environmentStatus.isIgnoringBatteryOptimizations
+            ) {
                 Divider()
                 Text(
-                    "首次使用：打开开发者选项 → 选择模拟位置信息应用 → 美国州府模拟定位。",
+                    "vivo 还需在电池设置中允许后台高耗电，并将本应用设为不受限制。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!environmentStatus.isSelectedMockApp) {
                         FilledTonalButton(onClick = onOpenDeveloperSettings) {
                             Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -249,6 +256,11 @@ private fun SetupCard(
                     if (!environmentStatus.isLocationEnabled) {
                         FilledTonalButton(onClick = onOpenLocationSettings) {
                             Text("开启定位")
+                        }
+                    }
+                    if (!environmentStatus.isIgnoringBatteryOptimizations) {
+                        FilledTonalButton(onClick = onOpenBatterySettings) {
+                            Text("电池设置")
                         }
                     }
                 }

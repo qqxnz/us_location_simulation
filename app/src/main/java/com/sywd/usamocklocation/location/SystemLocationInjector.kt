@@ -12,15 +12,13 @@ class SystemLocationInjector(
 ) : LocationInjector {
     private val activeProviders = linkedSetOf<String>()
 
-    @Synchronized
-    override fun start() {
+    override suspend fun start() {
         stop()
 
         val failures = mutableListOf<Throwable>()
         listOf(
             LocationManager.GPS_PROVIDER,
             LocationManager.NETWORK_PROVIDER,
-            FUSED_PROVIDER,
         ).forEach { provider ->
             runCatching {
                 locationManager.addTestProvider(
@@ -48,8 +46,7 @@ class SystemLocationInjector(
         }
     }
 
-    @Synchronized
-    override fun inject(capital: StateCapital) {
+    override suspend fun inject(capital: StateCapital) {
         if (activeProviders.isEmpty()) {
             throw MockLocationUnavailableException("模拟位置 Provider 尚未启动。")
         }
@@ -68,8 +65,7 @@ class SystemLocationInjector(
         }
     }
 
-    @Synchronized
-    override fun stop() {
+    override suspend fun stop() {
         val providersToRemove = activeProviders.toList()
         activeProviders.clear()
         providersToRemove.forEach { provider ->
@@ -83,5 +79,3 @@ class MockLocationUnavailableException(
     message: String,
     cause: Throwable? = null,
 ) : IllegalStateException(message, cause)
-
-private const val FUSED_PROVIDER = "fused"
