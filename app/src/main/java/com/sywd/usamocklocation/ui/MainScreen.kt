@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sywd.usamocklocation.BuildConfig
 import com.sywd.usamocklocation.EnvironmentStatus
 import com.sywd.usamocklocation.data.StateCapital
 import com.sywd.usamocklocation.data.StateCapitals
@@ -66,6 +67,7 @@ fun MainScreen(
     onStop: () -> Unit,
     onOpenDeveloperSettings: () -> Unit,
     onOpenLocationSettings: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
@@ -78,7 +80,10 @@ fun MainScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("美国州府模拟定位", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "美国州府模拟定位 v${BuildConfig.VERSION_NAME}",
+                            fontWeight = FontWeight.SemiBold,
+                        )
                         Text(
                             "仅用于自有 App 定位测试",
                             style = MaterialTheme.typography.labelMedium,
@@ -114,6 +119,7 @@ fun MainScreen(
                     environmentStatus = environmentStatus,
                     onOpenDeveloperSettings = onOpenDeveloperSettings,
                     onOpenLocationSettings = onOpenLocationSettings,
+                    onOpenBatterySettings = onOpenBatterySettings,
                 )
             }
 
@@ -220,6 +226,7 @@ private fun SetupCard(
     environmentStatus: EnvironmentStatus,
     onOpenDeveloperSettings: () -> Unit,
     onOpenLocationSettings: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
 ) {
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -230,15 +237,19 @@ private fun SetupCard(
             SetupRow("精确定位权限", environmentStatus.hasFineLocationPermission)
             SetupRow("系统定位开关", environmentStatus.isLocationEnabled)
             SetupRow("已设为模拟位置信息应用", environmentStatus.isSelectedMockApp)
+            SetupRow("电池优化已忽略", environmentStatus.isIgnoringBatteryOptimizations)
 
-            if (!environmentStatus.isLocationEnabled || !environmentStatus.isSelectedMockApp) {
+            if (!environmentStatus.isLocationEnabled ||
+                !environmentStatus.isSelectedMockApp ||
+                !environmentStatus.isIgnoringBatteryOptimizations
+            ) {
                 Divider()
                 Text(
-                    "首次使用：打开开发者选项 → 选择模拟位置信息应用 → 美国州府模拟定位。",
+                    "三星请将本应用的电池用量设为“不受限制”，并在“后台使用限制 → 从不自动休眠的应用”中添加本应用。其他品牌请允许后台运行。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!environmentStatus.isSelectedMockApp) {
                         FilledTonalButton(onClick = onOpenDeveloperSettings) {
                             Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -249,6 +260,11 @@ private fun SetupCard(
                     if (!environmentStatus.isLocationEnabled) {
                         FilledTonalButton(onClick = onOpenLocationSettings) {
                             Text("开启定位")
+                        }
+                    }
+                    if (!environmentStatus.isIgnoringBatteryOptimizations) {
+                        FilledTonalButton(onClick = onOpenBatterySettings) {
+                            Text("电池设置")
                         }
                     }
                 }

@@ -2,44 +2,127 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>系统定位 API 测试</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>获取经纬度</title>
   <style>
-    body { font-family: sans-serif; margin: 0; padding: 24px; background: #f5faf8; color: #10201e; }
-    main { max-width: 640px; margin: auto; }
-    button { padding: 14px 20px; font-size: 18px; border: 0; border-radius: 12px; background: #006a64; color: white; }
-    pre { padding: 18px; border-radius: 12px; background: white; font-size: 18px; line-height: 1.5; white-space: pre-wrap; }
-    small { color: #4a6360; }
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #17211f;
+      background: #f3f7f6;
+    }
+
+    main {
+      width: min(100%, 480px);
+      padding: 28px;
+      border-radius: 20px;
+      background: #fff;
+      box-shadow: 0 16px 50px rgb(21 54 47 / 12%);
+    }
+
+    h1 { margin: 0 0 24px; font-size: 28px; }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 0;
+      border-top: 1px solid #e4ecea;
+    }
+
+    .label { color: #63736f; }
+
+    output {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 700;
+    }
+
+    button {
+      width: 100%;
+      margin-top: 20px;
+      padding: 14px 18px;
+      border: 0;
+      border-radius: 12px;
+      color: #fff;
+      background: #087f67;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled { opacity: .6; cursor: wait; }
+
+    #message {
+      min-height: 22px;
+      margin: 16px 0 0;
+      color: #687874;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    #message.error { color: #b42318; }
   </style>
 </head>
 <body>
-<main>
-  <h1>系统定位 API 测试</h1>
-  <p>此页面只调用 <code>navigator.geolocation</code>，不使用 IP 定位。</p>
-  <button id="locate">读取系统位置</button>
-  <pre id="result">等待读取…</pre>
-  <small>保持模拟定位 App 运行，并允许浏览器使用位置。</small>
-</main>
-<script>
-  const result = document.querySelector('#result');
-  function locate() {
-    result.textContent = '正在请求系统位置…';
-    navigator.geolocation.getCurrentPosition(
-      ({coords, timestamp}) => {
-        result.textContent = [
-          '读取成功',
-          `纬度：${coords.latitude.toFixed(6)}`,
-          `经度：${coords.longitude.toFixed(6)}`,
-          `精度：${Math.round(coords.accuracy)} 米`,
-          `时间：${new Date(timestamp).toLocaleString()}`
-        ].join('\n');
-      },
-      error => { result.textContent = `读取失败（${error.code}）：${error.message}`; },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
-  }
-  document.querySelector('#locate').addEventListener('click', locate);
-  locate();
-</script>
+  <main>
+    <h1>获取 GPS 经纬度</h1>
+
+    <div class="row">
+      <span class="label">纬度</span>
+      <output id="latitude">—</output>
+    </div>
+    <div class="row">
+      <span class="label">经度</span>
+      <output id="longitude">—</output>
+    </div>
+
+    <button id="locate" type="button">获取当前位置</button>
+    <p id="message" role="status" aria-live="polite">点击按钮并允许浏览器访问位置。</p>
+  </main>
+
+  <script>
+    const button = document.querySelector('#locate');
+    const latitude = document.querySelector('#latitude');
+    const longitude = document.querySelector('#longitude');
+    const message = document.querySelector('#message');
+
+    button.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        message.textContent = '当前浏览器不支持定位。';
+        message.className = 'error';
+        return;
+      }
+
+      button.disabled = true;
+      message.textContent = '正在获取位置…';
+      message.className = '';
+
+      navigator.geolocation.getCurrentPosition(
+        position => {
+          latitude.textContent = position.coords.latitude.toFixed(6);
+          longitude.textContent = position.coords.longitude.toFixed(6);
+          message.textContent = '获取成功';
+          button.disabled = false;
+        },
+        error => {
+          const errors = {
+            1: '定位权限被拒绝，请在浏览器设置中允许定位。',
+            2: '无法获取位置，请确认系统定位已开启。',
+            3: '获取位置超时，请重试。'
+          };
+          message.textContent = errors[error.code] || '获取位置失败。';
+          message.className = 'error';
+          button.disabled = false;
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    });
+  </script>
 </body>
 </html>

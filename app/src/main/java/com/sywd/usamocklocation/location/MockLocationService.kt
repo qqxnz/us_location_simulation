@@ -13,6 +13,8 @@ import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -30,20 +32,44 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MockLocationService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val systemMutex = Mutex()
+    private val fusedMutex = Mutex()
+    private val healthMonitor = InjectionHealthMonitor()
+    private val ticker = IndependentInjectionTicker(
+        intervalMs = INJECTION_INTERVAL_MS,
+        fusedTimeoutMs = FUSED_CALL_TIMEOUT_MS,
+    )
+
     private lateinit var stateStore: AppStateStore
-    private lateinit var session: MockLocationSession
-    private var injectionJob: Job? = null
+    private lateinit var systemInjector: LocationInjector
+    private lateinit var fusedInjector: LocationInjector
+
+    private var systemJob: Job? = null
+    private var fusedJob: Job? = null
+    private var watchdogJob: Job? = null
+    private var wakeLockJob: Job? = null
+    private var cleanupJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var runGeneration = 0L
+    private var currentCapital: StateCapital? = null
+
+    @Volatile private var lastSystemSuccessMs = 0L
+    @Volatile private var lastFusedSuccessMs = 0L
+    @Volatile private var systemStatus = ChannelStatus.STARTING
+    @Volatile private var fusedStatus = ChannelStatus.STARTING
 
     override fun onCreate() {
         super.onCreate()
         stateStore = AppStateStore.get(this)
-        session = MockLocationSession(
-            SystemLocationInjector(getSystemService(LocationManager::class.java)),
-        )
+        systemInjector = SystemLocationInjector(getSystemService(LocationManager::class.java))
+        fusedInjector = newFusedInjector()
         createNotificationChannel()
     }
 
@@ -73,7 +99,7 @@ class MockLocationService : Service() {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
-                buildNotification(capital),
+                buildNotification(capital, "系统启动中 · Fused启动中"),
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
             )
         }.onFailure {
@@ -81,62 +107,218 @@ class MockLocationService : Service() {
             return
         }
 
-        injectionJob?.cancel()
-        runCatching {
-            session.start(capital)
-        }.onFailure {
-            failAndStop(friendlyError(it))
-            return
-        }
-
-        stateStore.markRunning(capital.code)
+        cleanupJob?.cancel()
+        cancelRuntimeJobs()
+        val generation = ++runGeneration
+        currentCapital = capital
+        val now = SystemClock.elapsedRealtime()
+        lastSystemSuccessMs = now
+        lastFusedSuccessMs = now
+        systemStatus = ChannelStatus.STARTING
+        fusedStatus = ChannelStatus.STARTING
         acquireWakeLock()
-        injectionJob = scope.launch {
-            while (isActive) {
-                delay(INJECTION_INTERVAL_MS)
-                try {
-                    session.tick()
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Throwable) {
-                    failAndStop(friendlyError(error))
-                    break
+        stateStore.markRunning(capital.code)
+
+        launchSystemLoop(capital, generation)
+        launchFusedLoop(capital, generation, rebuildClient = true)
+        launchWatchdog(capital, generation)
+        launchWakeLockMonitor(generation)
+    }
+
+    private fun launchSystemLoop(capital: StateCapital, generation: Long) {
+        systemJob?.cancel()
+        systemJob = scope.launch {
+            try {
+                systemMutex.withLock {
+                    ignoreFailure { systemInjector.stop() }
+                    systemInjector.start()
+                    systemInjector.inject(capital)
+                }
+                recordSystemSuccess()
+                ticker.runSystem(
+                    tick = { systemMutex.withLock { systemInjector.inject(capital) } },
+                    onSuccess = ::recordSystemSuccess,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                systemStatus = ChannelStatus.RECOVERING
+                Log.e(TAG, "System provider injection stopped; watchdog will restart it", error)
+                updateNotification(capital)
+            }
+        }
+    }
+
+    private fun launchFusedLoop(
+        capital: StateCapital,
+        generation: Long,
+        rebuildClient: Boolean,
+    ) {
+        fusedJob?.cancel()
+        fusedJob = scope.launch {
+            if (rebuildClient) rebuildFusedClient()
+            val failureTracker = ConsecutiveFailureTracker(FUSED_REBUILD_FAILURES)
+            var needsStart = true
+
+            ticker.runFused(
+                tick = {
+                    if (!isCurrentRun(generation)) throw CancellationException("stale run")
+                    fusedMutex.withLock {
+                        if (needsStart) {
+                            fusedInjector.start()
+                            needsStart = false
+                        }
+                        fusedInjector.inject(capital)
+                    }
+                },
+                onSuccess = {
+                    failureTracker.recordSuccess()
+                    recordFusedSuccess()
+                },
+                onFailure = { error ->
+                    fusedStatus = ChannelStatus.RECOVERING
+                    Log.w(TAG, "Fused injection failed or timed out", error)
+                    updateNotification(capital)
+
+                    if (failureTracker.recordFailure()) {
+                        Log.w(TAG, "Rebuilding Fused mock client after repeated failures")
+                        rebuildFusedClient()
+                        needsStart = true
+                    }
+                },
+            )
+        }
+    }
+
+    private suspend fun rebuildFusedClient() {
+        fusedMutex.withLock {
+            withTimeoutOrNull(FUSED_CALL_TIMEOUT_MS) { ignoreFailure { fusedInjector.stop() } }
+            fusedInjector = newFusedInjector()
+        }
+    }
+
+    private fun launchWatchdog(capital: StateCapital, generation: Long) {
+        watchdogJob?.cancel()
+        watchdogJob = scope.launch {
+            while (isCurrentRun(generation) && isActive) {
+                delay(WATCHDOG_INTERVAL_MS)
+                val actions = healthMonitor.evaluate(
+                    nowElapsedMs = SystemClock.elapsedRealtime(),
+                    lastSystemSuccessMs = lastSystemSuccessMs,
+                    lastFusedSuccessMs = lastFusedSuccessMs,
+                    wakeLockHeld = true,
+                )
+                Log.i(
+                    TAG,
+                    "Health systemAge=${SystemClock.elapsedRealtime() - lastSystemSuccessMs}ms " +
+                        "fusedAge=${SystemClock.elapsedRealtime() - lastFusedSuccessMs}ms " +
+                        "wakeLock=${wakeLock?.isHeld == true}",
+                )
+                if (actions.restartSystem) {
+                    Log.w(TAG, "System provider heartbeat stale; restarting channel")
+                    systemStatus = ChannelStatus.RECOVERING
+                    launchSystemLoop(capital, generation)
+                }
+                if (actions.restartFused) {
+                    Log.w(TAG, "Fused heartbeat stale; restarting channel")
+                    fusedStatus = ChannelStatus.RECOVERING
+                    launchFusedLoop(capital, generation, rebuildClient = true)
+                    lastFusedSuccessMs = SystemClock.elapsedRealtime()
+                }
+                updateNotification(capital)
+            }
+        }
+    }
+
+    private fun launchWakeLockMonitor(generation: Long) {
+        wakeLockJob?.cancel()
+        wakeLockJob = scope.launch {
+            while (isCurrentRun(generation) && isActive) {
+                delay(WAKE_LOCK_CHECK_INTERVAL_MS)
+                val actions = healthMonitor.evaluate(
+                    nowElapsedMs = SystemClock.elapsedRealtime(),
+                    lastSystemSuccessMs = lastSystemSuccessMs,
+                    lastFusedSuccessMs = lastFusedSuccessMs,
+                    wakeLockHeld = wakeLock?.isHeld == true,
+                )
+                if (actions.reacquireWakeLock) {
+                    Log.w(TAG, "WakeLock was released by the system; acquiring it again")
+                    acquireWakeLock()
                 }
             }
         }
     }
 
+    private fun recordSystemSuccess() {
+        lastSystemSuccessMs = SystemClock.elapsedRealtime()
+        systemStatus = ChannelStatus.HEALTHY
+    }
+
+    private fun recordFusedSuccess() {
+        lastFusedSuccessMs = SystemClock.elapsedRealtime()
+        fusedStatus = ChannelStatus.HEALTHY
+    }
+
+    private fun updateNotification(capital: StateCapital) {
+        if (currentCapital?.code != capital.code) return
+        getSystemService(NotificationManager::class.java).notify(
+            NOTIFICATION_ID,
+            buildNotification(capital, notificationStatusText()),
+        )
+    }
+
+    private fun notificationStatusText(): String {
+        val now = SystemClock.elapsedRealtime()
+        val latestSuccess = maxOf(lastSystemSuccessMs, lastFusedSuccessMs)
+        val ageSeconds = ((now - latestSuccess).coerceAtLeast(0L) / 1_000L)
+        return "系统${systemStatus.label} · Fused${fusedStatus.label} · 最近${ageSeconds}秒"
+    }
+
     private fun stopMocking() {
-        injectionJob?.cancel()
-        injectionJob = null
-        runCatching { session.stop() }
-        releaseWakeLock()
-        stateStore.markStopped()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        ++runGeneration
+        currentCapital = null
+        cancelRuntimeJobs()
+        cleanupJob?.cancel()
+        cleanupJob = scope.launch { cleanupAndStopService() }
     }
 
     private fun failAndStop(message: String) {
-        injectionJob?.cancel()
-        injectionJob = null
-        runCatching { session.stop() }
+        ++runGeneration
+        currentCapital = null
+        cancelRuntimeJobs()
+        cleanupJob?.cancel()
+        cleanupJob = scope.launch { cleanupAndStopService(message) }
+    }
+
+    private suspend fun cleanupAndStopService(message: String? = null) {
+        systemMutex.withLock { ignoreFailure { systemInjector.stop() } }
+        fusedMutex.withLock {
+            withTimeoutOrNull(FUSED_CALL_TIMEOUT_MS) { ignoreFailure { fusedInjector.stop() } }
+        }
         releaseWakeLock()
         stateStore.markStopped(message)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    private fun friendlyError(error: Throwable): String = when (error) {
-        is SecurityException -> "系统拒绝模拟定位。请在开发者选项中将本应用设为“模拟位置信息应用”。"
-        is MockLocationUnavailableException -> error.message ?: "模拟定位不可用。"
-        else -> "模拟定位已停止：${error.message ?: error.javaClass.simpleName}"
+    private fun cancelRuntimeJobs() {
+        systemJob?.cancel()
+        fusedJob?.cancel()
+        watchdogJob?.cancel()
+        wakeLockJob?.cancel()
+        systemJob = null
+        fusedJob = null
+        watchdogJob = null
+        wakeLockJob = null
     }
+
+    private fun isCurrentRun(generation: Long) = generation == runGeneration
 
     private fun hasLocationPermission(): Boolean =
         ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
-    private fun buildNotification(capital: StateCapital): Notification {
+    private fun buildNotification(capital: StateCapital, statusText: String): Notification {
         val openAppIntent = PendingIntent.getActivity(
             this,
             0,
@@ -151,8 +333,8 @@ class MockLocationService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_app)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText("${capital.stateNameZh} · ${capital.capitalNameZh} (${capital.code})")
+            .setContentTitle("${capital.stateNameZh} · ${capital.capitalNameZh} (${capital.code})")
+            .setContentText(statusText)
             .setContentIntent(openAppIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -182,21 +364,45 @@ class MockLocationService : Service() {
                 setReferenceCounted(false)
                 acquire()
             }
+        Log.i(TAG, "WakeLock acquired; held=${wakeLock?.isHeld}")
     }
 
     private fun releaseWakeLock() {
-        wakeLock?.let { lock ->
-            if (lock.isHeld) lock.release()
-        }
+        wakeLock?.let { lock -> if (lock.isHeld) lock.release() }
         wakeLock = null
     }
 
+    private fun newFusedInjector(): LocationInjector = FusedLocationInjector(applicationContext)
+
     override fun onDestroy() {
-        injectionJob?.cancel()
-        runCatching { session.stop() }
+        ++runGeneration
+        cancelRuntimeJobs()
+        cleanupJob?.cancel()
+        runBlocking(Dispatchers.IO) {
+            systemMutex.withLock { ignoreFailure { systemInjector.stop() } }
+            fusedMutex.withLock {
+                withTimeoutOrNull(FUSED_CALL_TIMEOUT_MS) { ignoreFailure { fusedInjector.stop() } }
+            }
+        }
         releaseWakeLock()
         scope.cancel()
         super.onDestroy()
+    }
+
+    private enum class ChannelStatus(val label: String) {
+        STARTING("启动中"),
+        HEALTHY("正常"),
+        RECOVERING("恢复中"),
+    }
+
+    private suspend inline fun ignoreFailure(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.w(TAG, "Best-effort cleanup failed", error)
+        }
     }
 
     companion object {
@@ -204,9 +410,14 @@ class MockLocationService : Service() {
         const val ACTION_STOP = "com.sywd.usamocklocation.action.STOP"
         const val EXTRA_STATE_CODE = "state_code"
 
+        private const val TAG = "MockLocationService"
         private const val CHANNEL_ID = "mock_location_status"
         private const val NOTIFICATION_ID = 1001
         private const val INJECTION_INTERVAL_MS = 1_000L
+        private const val FUSED_CALL_TIMEOUT_MS = 3_000L
+        private const val FUSED_REBUILD_FAILURES = 3
+        private const val WATCHDOG_INTERVAL_MS = 5_000L
+        private const val WAKE_LOCK_CHECK_INTERVAL_MS = 10_000L
 
         fun startIntent(context: Context, stateCode: String) =
             Intent(context, MockLocationService::class.java)

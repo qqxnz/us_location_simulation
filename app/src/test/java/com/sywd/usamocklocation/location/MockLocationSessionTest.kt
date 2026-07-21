@@ -5,13 +5,14 @@ import com.sywd.usamocklocation.data.StateCapitals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 
 class MockLocationSessionTest {
     private val california = StateCapitals.find("CA")!!
     private val texas = StateCapitals.find("TX")!!
 
     @Test
-    fun `start inject tick and stop follow lifecycle`() {
+    fun `start inject tick and stop follow lifecycle`(): Unit = runBlocking {
         val injector = FakeLocationInjector()
         val session = MockLocationSession(injector)
 
@@ -26,7 +27,7 @@ class MockLocationSessionTest {
     }
 
     @Test
-    fun `repeated start does not recreate provider`() {
+    fun `repeated start does not recreate provider`(): Unit = runBlocking {
         val injector = FakeLocationInjector()
         val session = MockLocationSession(injector)
 
@@ -39,7 +40,7 @@ class MockLocationSessionTest {
     }
 
     @Test
-    fun `switching state recreates provider and injects new capital`() {
+    fun `switching state recreates provider and injects new capital`(): Unit = runBlocking {
         val injector = FakeLocationInjector()
         val session = MockLocationSession(injector)
 
@@ -52,7 +53,7 @@ class MockLocationSessionTest {
     }
 
     @Test
-    fun `provider failure clears active session and cleans up`() {
+    fun `provider failure clears active session and cleans up`(): Unit = runBlocking {
         val injector = FakeLocationInjector(failOnStart = true)
         val session = MockLocationSession(injector)
 
@@ -62,7 +63,7 @@ class MockLocationSessionTest {
     }
 
     @Test
-    fun `tick before start fails`() {
+    fun `tick before start fails`(): Unit = runBlocking {
         val session = MockLocationSession(FakeLocationInjector())
         expectThrows<MockLocationUnavailableException> { session.tick() }
     }
@@ -74,16 +75,16 @@ class MockLocationSessionTest {
         var stopCount = 0
         val injectedCodes = mutableListOf<String>()
 
-        override fun start() {
+        override suspend fun start() {
             startCount++
             if (failOnStart) throw SecurityException("not selected")
         }
 
-        override fun inject(capital: StateCapital) {
+        override suspend fun inject(capital: StateCapital) {
             injectedCodes += capital.code
         }
 
-        override fun stop() {
+        override suspend fun stop() {
             stopCount++
         }
     }
