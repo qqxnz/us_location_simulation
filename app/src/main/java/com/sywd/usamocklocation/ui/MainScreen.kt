@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sywd.usamocklocation.BuildConfig
 import com.sywd.usamocklocation.EnvironmentStatus
 import com.sywd.usamocklocation.data.StateCapital
 import com.sywd.usamocklocation.data.StateCapitals
@@ -79,7 +80,10 @@ fun MainScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("美国州府模拟定位", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "美国州府模拟定位 v${BuildConfig.VERSION_NAME}",
+                            fontWeight = FontWeight.SemiBold,
+                        )
                         Text(
                             "仅用于自有 App 定位测试",
                             style = MaterialTheme.typography.labelMedium,
@@ -241,7 +245,7 @@ private fun SetupCard(
             ) {
                 Divider()
                 Text(
-                    "vivo 还需在电池设置中允许后台高耗电，并将本应用设为不受限制。",
+                    "三星请将本应用的电池用量设为“不受限制”，并在“后台使用限制 → 从不自动休眠的应用”中添加本应用。其他品牌请允许后台运行。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

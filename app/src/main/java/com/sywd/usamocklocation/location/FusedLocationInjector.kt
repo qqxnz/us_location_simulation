@@ -33,7 +33,10 @@ class FusedLocationInjector(context: Context) : LocationInjector {
         try {
             task.await()
         } finally {
-            if (task.isComplete && pendingLocationTask === task) pendingLocationTask = null
+            // Task.await() cancellation does not cancel the Google Task. Forget it after a
+            // coroutine timeout so the next heartbeat can submit a fresh location instead of
+            // waiting on the same permanently stuck Binder call.
+            if (pendingLocationTask === task) pendingLocationTask = null
         }
     }
 
